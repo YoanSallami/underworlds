@@ -179,12 +179,12 @@ class Server(gRPC.BetaUnderworldsServicer):
         return action
 
     @profile
-    def _emit_invalidation(self, target, world, node_id, invalidation_type):
+    def _emit_invalidation(self, target, world, node_ids, invalidation_type):
 
         invalidation = gRPC.Invalidation(target=target,
                                          type=invalidation_type, 
-                                         world=world, 
-                                         id=node_id)
+                                         world=world)
+        invalidation.ids[:] = node_ids
 
 
         with self._client_lock:
@@ -339,81 +339,84 @@ class Server(gRPC.BetaUnderworldsServicer):
 
 
     @profile
-    def updateNode(self, nodeInCtxt, context):
-        logger.debug("Got <updateNode> from %s" % nodeInCtxt.context.client)
-        self._update_current_links(nodeInCtxt.context.client, nodeInCtxt.context.world, PROVIDER)
+    def updateNodes(self, nodesInCtxt, context):
+        logger.debug("Got <updateNodes> from %s" % nodesInCtxt.context.client)
+        self._update_current_links(nodesInCtxt.context.client, nodesInCtxt.context.world, PROVIDER)
 
-        client_id, world = nodeInCtxt.context.client, nodeInCtxt.context.world
-        scene,_ = self._get_scene_timeline(nodeInCtxt.context)
+        client_id, world = nodesInCtxt.context.client, nodesInCtxt.context.world
+        scene,_ = self._get_scene_timeline(nodesInCtxt.context)
 
-        node = Node.deserialize(nodeInCtxt.node)
+        # TODO: optimize to send a single invalidation if more than one node
+        for gRPCNode in nodesInCtxt.nodes:
+            node = Node.deserialize(gRPCNode)
 
-        invalidation_type, parent_has_changed = self._update_node(scene, node)
+            invalidation_type, parent_has_changed = self._update_node(scene, node)
 
-        logger.info("<%s> %s node <%s> in world <%s>" % \
-                            (self._clientname(client_id), 
-                             "updated" if invalidation_type==gRPC.Invalidation.UPDATE else ("created" if invalidation_type==gRPC.Invalidation.NEW else "deleted"),
-                             repr(node), 
-                             world))
+            logger.info("<%s> %s node <%s> in world <%s>" % \
+                                (self._clientname(client_id), 
+                                "updated" if invalidation_type==gRPC.Invalidation.UPDATE else ("created" if invalidation_type==gRPC.Invalidation.NEW else "deleted"),
+                                repr(node), 
+                                world))
 
 
-        logger.debug("Adding invalidation action [" + str(invalidation_type) + "]")
-        self._emit_invalidation(gRPC.Invalidation.SCENE, world, node.id, invalidation_type)
+            logger.debug("Adding invalidation action [" + str(invalidation_type) + "]")
+            self._emit_invalidation(gRPC.Invalidation.SCENE, world, [node.id], invalidation_type)
 
-        ## If necessary, update the node hierarchy
-        if parent_has_changed:
-            parent = scene.node(node.parent)
-            if parent is None:
-                logger.warning("Node %s references a non-exisiting parent" % node)
-            elif node.id not in parent.children:
-                parent.children.append(node.id)
-                # tells everyone about the change to the parent
-                logger.debug("Adding invalidation action [update " + parent.id + "] due to hierarchy update")
-                self._emit_invalidation(gRPC.Invalidation.SCENE, world, parent.id, gRPC.Invalidation.UPDATE)
+            ## If necessary, update the node hierarchy
+            if parent_has_changed:
+                parent = scene.node(node.parent)
+                if parent is None:
+                    logger.warning("Node %s references a non-exisiting parent" % node)
+                elif node.id not in parent.children:
+                    parent.children.append(node.id)
+                    # tells everyone about the change to the parent
+                    logger.debug("Adding invalidation action [update " + parent.id + "] due to hierarchy update")
+                    self._emit_invalidation(gRPC.Invalidation.SCENE, world, [parent.id], gRPC.Invalidation.UPDATE)
 
-                # As a node has only one parent, if the parent has changed we must
-                # remove our node for its previous parent
-                for othernode in scene.nodes:
-                    if othernode.id != parent.id and node.id in othernode.children:
-                        othernode.children.remove(node.id)
-                        # tells everyone about the change to the former parent
-                        logger.debug("Adding invalidation action [update " + othernode.id + "] due to hierarchy update")
-                        self._emit_invalidation(gRPC.Invalidation.SCENE, world, othernode.id, gRPC.Invalidation.UPDATE)
-                        break
+                    # As a node has only one parent, if the parent has changed we must
+                    # remove our node from its previous parent
+                    for othernode in scene.nodes:
+                        if othernode.id != parent.id and node.id in othernode.children:
+                            othernode.children.remove(node.id)
+                            # tells everyone about the change to the former parent
+                            logger.debug("Adding invalidation action [update " + othernode.id + "] due to hierarchy update")
+                            self._emit_invalidation(gRPC.Invalidation.SCENE, world, [othernode.id], gRPC.Invalidation.UPDATE)
+                            break
 
-        logger.debug("<updateNode> completed")
+        logger.debug("<updateNodes> completed")
         return gRPC.Empty()
 
     @profile
-    def deleteNode(self, nodeInCtxt, context):
-        logger.debug("Got <deleteNode> from %s" % nodeInCtxt.context.client)
-        self._update_current_links(nodeInCtxt.context.client, nodeInCtxt.context.world, PROVIDER)
+    def deletesNode(self, nodesInCtxt, context):
+        logger.debug("Got <deleteNodes> from %s" % nodesInCtxt.context.client)
+        self._update_current_links(nodesInCtxt.context.client, nodesInCtxt.context.world, PROVIDER)
 
-        client_id, world = nodeInCtxt.context.client, nodeInCtxt.context.world
-        scene,_ = self._get_scene_timeline(nodeInCtxt.context)
+        client_id, world = nodesInCtxt.context.client, nodesInCtxt.context.world
+        scene,_ = self._get_scene_timeline(nodesInCtxt.context)
 
+        # TODO: optimize to send a single invalidation if more than one node
+        for gRPCNode in nodesInCtxt.nodes:
+            node = scene.node(gRPCNode.id)
+            logger.info("<%s> deleted node <%s> in world <%s>" % \
+                                (self._clientname(client_id), 
+                                repr(node), 
+                                world))
 
-        node = scene.node(nodeInCtxt.node.id)
-        logger.info("<%s> deleted node <%s> in world <%s>" % \
-                            (self._clientname(client_id), 
-                             repr(node), 
-                             world))
+            action = self._delete_node(scene, gRPCNode.id)
 
-        action = self._delete_node(scene, nodeInCtxt.node.id)
+            # tells everyone about the change
+            logger.debug("Sent invalidation action [delete]")
+            self._emit_invalidation(gRPC.Invalidation.SCENE, world, [gRPCNode.id], gRPC.Invalidation.DELETE)
 
-        # tells everyone about the change
-        logger.debug("Sent invalidation action [delete]")
-        self._emit_invalidation(gRPC.Invalidation.SCENE, world, nodeInCtxt.node.id, gRPC.Invalidation.DELETE)
+            # Also remove the node for its parent's children
+            parent = scene.node(node.parent)
+            if parent:
+                parent.children.remove(node.id)
+                # tells everyone about the change to the parent
+                logger.debug("Sent invalidation action [update " + parent.id + "] due to hierarchy update")
+                self._emit_invalidation(gRPC.Invalidation.SCENE, world, [parent.id], gRPC.Invalidation.UPDATE)
 
-        # Also remove the node for its parent's children
-        parent = scene.node(node.parent)
-        if parent:
-            parent.children.remove(node.id)
-            # tells everyone about the change to the parent
-            logger.debug("Sent invalidation action [update " + parent.id + "] due to hierarchy update")
-            self._emit_invalidation(gRPC.Invalidation.SCENE, world, parent.id, gRPC.Invalidation.UPDATE)
-
-        logger.debug("<deleteNode> completed")
+        logger.debug("<deleteNodes> completed")
         return gRPC.Empty()
 
 
@@ -500,7 +503,7 @@ class Server(gRPC.BetaUnderworldsServicer):
 
 
         logger.debug("Adding invalidation action [" + str(invalidation_type) + "]")
-        self._emit_invalidation(gRPC.Invalidation.TIMELINE, world, situation.id, invalidation_type)
+        self._emit_invalidation(gRPC.Invalidation.TIMELINE, world, [situation.id], invalidation_type)
 
         logger.debug("<updateSituation> completed")
         return gRPC.Empty()
@@ -524,7 +527,7 @@ class Server(gRPC.BetaUnderworldsServicer):
 
         # tells everyone about the change
         logger.debug("Sent invalidation action [delete]")
-        self._emit_invalidation(gRPC.Invalidation.TIMELINE, world, sitInCtxt.situation.id, gRPC.Invalidation.DELETE)
+        self._emit_invalidation(gRPC.Invalidation.TIMELINE, world, [sitInCtxt.situation.id], gRPC.Invalidation.DELETE)
 
         logger.debug("<deleteSituation> completed")
         return gRPC.Empty()

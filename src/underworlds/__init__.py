@@ -116,7 +116,7 @@ class NodesProxy:
         self._get_node_from_remote(id)
 
     def _get_node_from_remote(self, id):
-
+        assert(id is not None)
         nodeInCtxt = gRPC.NodeInContext(context=self._server_ctx,
                                         node=gRPC.Node(id=id))
         try:
@@ -391,7 +391,6 @@ class TimelineProxy:
     @profile
     def _on_remotely_added_situations(self, ids):
 
-
         self._len += len(ids)
 
         for id in ids:
@@ -401,7 +400,6 @@ class TimelineProxy:
         with self.waitforchanges_cv:
             self.lastchange = (ids, NEW)
             self.waitforchanges_cv.notify_all()
-
 
     @profile
     def _on_remotely_deleted_situations(self, ids):
@@ -458,7 +456,6 @@ class TimelineProxy:
             return True
         except KeyError:
             return False
-        
 
     def __getitem__(self, key):
 
@@ -498,7 +495,7 @@ class TimelineProxy:
             if key in self._ids:
                 # did the situation changed since the last time we obtained it?
                 if key in self._updated_ids:
-                        self._update_situation_from_remote(key)
+                    self._update_situation_from_remote(key)
                 return self._situations[key]
             elif key in self._updated_ids:
                 self._update_situation_from_remote(key)

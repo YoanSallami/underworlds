@@ -864,6 +864,8 @@ class Underworlds3DViewer:
                              selected=node.selected if hasattr(node, "selected") else False)
 
             if node.type == CAMERA:
+                if node not in self.cameras:
+                    self.cameras.append(node)
                 self.render_camera(node, m)
 
             for child in node.children:

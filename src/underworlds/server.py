@@ -5,7 +5,7 @@ import logging;logger = logging.getLogger("underworlds.server")
 
 from underworlds.types import *
 from underworlds.helpers.profile import profile, profileonce
-from grpc.framework.interfaces.face.face import ExpirationError,NetworkError,AbortionError
+from grpc.framework.interfaces.face.face import ExpirationError, NetworkError, AbortionError
 import underworlds.underworlds_pb2 as gRPC 
 from grpc.beta import interfaces as beta_interfaces
 from grpc.beta import implementations
@@ -60,7 +60,6 @@ class Client:
 
         # remove the future form the current list of active invalidations upon completion
         future.add_done_callback(self._cleanup_completed_invalidations)
-
 
     def _cleanup_completed_invalidations(self, invalidation):
         e = invalidation.exception()
@@ -141,9 +140,13 @@ class Server(gRPC.BetaUnderworldsServicer):
 
         node.last_update = time.time()
 
+        if node.parent is None:
+            node.parent = scene.rootnode.id
+
         oldnode = scene.node(node.id)
 
         if oldnode: # the node already exist
+
             parent_has_changed = oldnode.parent != node.parent
 
             # update the list of children
@@ -157,8 +160,6 @@ class Server(gRPC.BetaUnderworldsServicer):
         else: # new node
             scene.nodes.append(node)
             parent_has_changed = True
-            if node.parent is None:
-                node.parent = scene.rootnode.id
             action = NEW
 
         return action, parent_has_changed
@@ -175,23 +176,22 @@ class Server(gRPC.BetaUnderworldsServicer):
         else:
             action = NEW
 
-        timeline.update(situation)
-
         return action
 
     @profile
-    def _emit_invalidation(self, target, world, node_ids, invalidation_type):
+    def _emit_invalidation(self, target, world, ids, invalidation_type):
 
         invalidation = gRPC.Invalidation(target=target,
                                          type=invalidation_type, 
                                          world=world)
-        invalidation.ids[:] = node_ids
+        invalidation.ids[:] = ids
 
+        invalidated = "nodes" if target is gRPC.Invalidation.SCENE else "situations"
 
         with self._client_lock:
             for client_id in self._clients:
                 if world in self._clients[client_id].links:
-                    logger.debug("Informing client <%s> that nodes have been invalidated in world <%s>" % (self._clientname(client_id), world))
+                    logger.debug("Informing client <%s> that %s have been invalidated in world <%s>" % (self._clientname(client_id), invalidated, world))
                     self._clients[client_id].emit_invalidation(invalidation)
 
 
@@ -324,7 +324,6 @@ class Server(gRPC.BetaUnderworldsServicer):
 
         if not nodeInCtxt.node.id:
             logger.warning("%s has required a node without specifying its id!" % (self._clientname(client_id)))
-
             context.details("No node id provided")
             context.code(beta_interfaces.StatusCode.NOT_FOUND)
             return gRPC.Node()
@@ -401,7 +400,6 @@ class Server(gRPC.BetaUnderworldsServicer):
         if nodes_to_invalidate_new:
             self._emit_invalidation(gRPC.Invalidation.SCENE, world, nodes_to_invalidate_new, NEW)
 
-
         logger.debug("<updateNodes> completed")
         return gRPC.Empty()
 
@@ -474,8 +472,8 @@ class Server(gRPC.BetaUnderworldsServicer):
         _,timeline = self._get_scene_timeline(ctxt)
 
         situations = gRPC.Situations()
-        for s in timeline.situations:
-            situations.ids.append(s.id)
+        for sit_id, _ in timeline.situations.items():
+            situations.ids.append(sit_id)
 
         logger.debug("<getSituationsIds> completed")
         return situations
@@ -497,7 +495,6 @@ class Server(gRPC.BetaUnderworldsServicer):
             context.details("No situation id provided")
             context.code(beta_interfaces.StatusCode.NOT_FOUND)
             return gRPC.Node()
-
 
         situation = timeline.situation(sitInCtxt.situation.id)
 
@@ -538,7 +535,6 @@ class Server(gRPC.BetaUnderworldsServicer):
         situations_to_invalidate_new = []
         for gRPCSit in sitInCtxt.situations:
 
-
             situation = Situation.deserialize(gRPCSit)
 
             invalidation_type = self._update_situation(timeline, situation)
@@ -548,8 +544,8 @@ class Server(gRPC.BetaUnderworldsServicer):
                                 repr(situation), 
                                 world))
 
-
-            logger.debug("Adding invalidation action [" + str(invalidation_type) + "]")
+            logger.debug("Adding invalidation action [" + str(INVALIDATIONTYPE_NAMES[invalidation_type]) + " " +
+                         repr(situation) + "]")
 
             if invalidation_type == UPDATE:
                 situations_to_invalidate_update.append(situation.id)
@@ -562,7 +558,6 @@ class Server(gRPC.BetaUnderworldsServicer):
             self._emit_invalidation(gRPC.Invalidation.TIMELINE, world, situations_to_invalidate_update, UPDATE)
         if situations_to_invalidate_new:
             self._emit_invalidation(gRPC.Invalidation.TIMELINE, world, situations_to_invalidate_new, NEW)
-
 
         logger.debug("<updateSituations> completed")
         return gRPC.Empty()
@@ -664,7 +659,7 @@ def start(port=50051, signaling_queue=None):
     It then properly closes the server and returns None.
     """
 
-    desired_port=str(port)
+    desired_port = str(port)
 
     server = gRPC.beta_create_Underworlds_server(Server())
     port = server.add_insecure_port('[::]:%s' % desired_port)

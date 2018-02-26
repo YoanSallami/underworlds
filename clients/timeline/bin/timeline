@@ -263,7 +263,7 @@ class TimelineDrawer:
         mid = height/2
 
         lvl = 0
-        for s in self.timeline.situations:
+        for s in self.timeline:
             context.identity_matrix()
             context.move_to(TimelineDrawer.margins, mid)
             if s.isevent():
@@ -335,7 +335,7 @@ class TimelineApp:
 
         self.ctx = ctx
 
-        self.gladefile = "res/timeline.glade"
+        self.gladefile = "../res/timeline.glade"
         self.builder = gtk.Builder()
         self.builder.add_from_file(self.gladefile)
         self.builder.connect_signals(self)

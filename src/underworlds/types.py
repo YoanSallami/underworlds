@@ -290,7 +290,6 @@ class MeshData(object):
         logger.info("Serialized mesh %s in %.2fsec" % (self.id, time.time()-starttime))
         return mesh
 
-
     @staticmethod
     def deserialize(data):
         """Creates a Python mesh object from a protobuf encoding.
@@ -495,7 +494,10 @@ class Situation(object):
         return self.endtime == self.starttime
 
     def __repr__(self):
-        return self.id + " (" + SITUATIONTYPE_NAMES[self.type] + ")"
+        if self.desc:
+            return self.id + " " + self.desc
+        else:
+            return self.id + " (" + SITUATIONTYPE_NAMES[self.type] + ")"
 
     def __str__(self):
         if self.desc:
